@@ -79,7 +79,7 @@ class SimpleTokenizer:
     def __init__(self, bpe_path=None):
         bpe_path = bpe_path or keras.utils.get_file(
             "bpe_simple_vocab_16e6.txt.gz",
-            "https://github.com/openai/CLIP/blob/main/clip/bpe_simple_vocab_16e6.txt.gz?raw=true",  # noqa: E501
+            "https://huggingface.co/Elvenson/stable_diffusion_weights/resolve/main/bpe_simple_vocab_16e6.txt.gz",  # noqa: E501
             file_hash="924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a",  # noqa: E501
         )
         self.byte_encoder = bytes_to_unicode()
