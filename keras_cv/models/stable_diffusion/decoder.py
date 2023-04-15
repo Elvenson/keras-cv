@@ -63,7 +63,7 @@ class Decoder(keras.Sequential):
 
         if download_weights:
             decoder_weights_fpath = keras.utils.get_file(
-                origin="https://huggingface.co/fchollet/stable-diffusion/resolve/main/kcv_decoder.h5",  # noqa: E501
+                origin="https://huggingface.co/Elvenson/stable_diffusion_weights/resolve/main/kcv_decoder.h5",  # noqa: E501
                 file_hash="ad350a65cc8bc4a80c8103367e039a3329b4231c2469a1093869a345f55b1962",  # noqa: E501
             )
             self.load_weights(decoder_weights_fpath)
