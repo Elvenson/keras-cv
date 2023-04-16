@@ -71,7 +71,7 @@ class Predictor(BasePredictor):
         output_paths = []
         for idx, img in enumerate(imgs):
             output_path = f"/tmp/out-{idx}.png"
-            Image.fromarray(img[0]).save(output_path)
+            Image.fromarray(img[idx]).save(output_path)
             output_paths.append(Path(output_path))
 
         return output_paths
