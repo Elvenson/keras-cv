@@ -33,7 +33,7 @@ class Predictor(BasePredictor):
                     description="Image prompt."),
                 image_size: str = Input(
                     description="Image size.",
-                    choice=["384x512", "640x960"],
+                    choices=["384x512", "640x960"],
                     default="384x512"),
                 num_outputs: int = Input(
                     description="Number of images to output.",
@@ -49,7 +49,7 @@ class Predictor(BasePredictor):
                 ),
                 version: int = Input(
                     description="Stable diffusion version.",
-                    choice=[1, 2],
+                    choices=[1, 2],
                     default=1
                 )
                 ) -> List[Path]:
