@@ -11,6 +11,7 @@ from typing import List
 from PIL import Image
 from cog import BasePredictor, Path, Input
 from tensorflow import keras
+import profanity_check
 
 from keras_cv.models import StableDiffusion, StableDiffusionV2
 
@@ -54,6 +55,10 @@ class Predictor(BasePredictor):
                 )
                 ) -> List[Path]:
         """Run a single prediction on the model"""
+        is_profane = profanity_check.predict([prompt])
+        if is_profane:
+            raise Exception("The service detects profanity in your prompt, please check and rewrite your prompt.")
+
         tks = image_size.split("x")
         img_width = int(tks[0])
         img_height = int(tks[1])
