@@ -54,12 +54,9 @@ class Predictor(BasePredictor):
                 )
                 ) -> List[Path]:
         """Run a single prediction on the model"""
-        print("image size is {}".format(image_size))
         tks = image_size.split("x")
-        print("tks is {}".format(tks))
         img_width = int(tks[0])
         img_height = int(tks[1])
-        print("image width and height are: {}, {}".format(img_width, img_height))
         if (img_width, img_height, version) not in self.model_map.keys():
             if version == 1:
                 model = StableDiffusion(img_height=img_height, img_width=img_width, jit_compile=True)
@@ -74,7 +71,7 @@ class Predictor(BasePredictor):
         output_paths = []
         for idx, img in enumerate(imgs):
             output_path = f"/tmp/out-{idx}.png"
-            Image.fromarray(img[idx]).save(output_path)
+            Image.fromarray(img).save(output_path)
             output_paths.append(Path(output_path))
 
         return output_paths
