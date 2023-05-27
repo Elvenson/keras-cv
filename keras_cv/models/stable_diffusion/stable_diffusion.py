@@ -28,6 +28,7 @@ import math
 
 import numpy as np
 import tensorflow as tf
+from PIL import Image
 from tensorflow import keras
 
 from keras_cv.models.stable_diffusion.clip_tokenizer import SimpleTokenizer
@@ -47,10 +48,10 @@ class StableDiffusionBase:
     """Base class for stable diffusion and stable diffusion v2 model."""
 
     def __init__(
-        self,
-        img_height=512,
-        img_width=512,
-        jit_compile=False,
+            self,
+            img_height=512,
+            img_width=512,
+            jit_compile=False,
     ):
         # UNet requires multiples of 2**7 = 128
         img_height = round(img_height / 128) * 128
@@ -68,13 +69,13 @@ class StableDiffusionBase:
         self.jit_compile = jit_compile
 
     def text_to_image(
-        self,
-        prompt,
-        negative_prompt=None,
-        batch_size=1,
-        num_steps=50,
-        unconditional_guidance_scale=7.5,
-        seed=None,
+            self,
+            prompt,
+            negative_prompt=None,
+            batch_size=1,
+            num_steps=50,
+            unconditional_guidance_scale=7.5,
+            seed=None,
     ):
         encoded_text = self.encode_text(prompt)
 
@@ -124,15 +125,26 @@ class StableDiffusionBase:
 
         return context
 
+    def _get_image_latent(self, batch_size, input_image, image_noise_t, seed):
+        latent = self.image_encoder(input_image)
+        latent = tf.repeat(latent, batch_size, axis=0)
+        noise = tf.random.normal((batch_size, latent.shape[1], latent.shape[2], 4), dtype=latent.dtype,
+                                 seed=seed)
+        sqrt_alpha_prod = tf.sqrt(_ALPHAS_CUMPROD[image_noise_t])
+        sqrt_one_minus_alpha_prod = tf.sqrt(1 - _ALPHAS_CUMPROD[image_noise_t])
+        return sqrt_alpha_prod * latent + sqrt_one_minus_alpha_prod * noise
+
     def generate_image(
-        self,
-        encoded_text,
-        negative_prompt=None,
-        batch_size=1,
-        num_steps=50,
-        unconditional_guidance_scale=7.5,
-        diffusion_noise=None,
-        seed=None,
+            self,
+            encoded_text,
+            negative_prompt=None,
+            batch_size=1,
+            num_steps=50,
+            unconditional_guidance_scale=7.5,
+            diffusion_noise=None,
+            seed=None,
+            input_image=None,
+            input_image_strength=0.5
     ):
         """Generates an image based on encoded text.
 
@@ -161,6 +173,13 @@ class StableDiffusionBase:
             seed: integer which is used to seed the random generation of
                 diffusion noise, only to be specified if `diffusion_noise` is
                 None.
+            input_image: An image path or a tensor of shape (image_height,
+                image_width, 3) represents the input image that the output image
+                will be conditioned on. Only to be specified if `diffusion_noise`
+                is None.
+            input_image_strength: A float ranging from [0, 1) where smaller number
+                will make the output looks similar to the `input_image` and vice
+                versa.
 
         Example:
 
@@ -176,14 +195,15 @@ class StableDiffusionBase:
         images = model.generate_image(e_interpolated, batch_size=batch_size)
         ```
         """
-        if diffusion_noise is not None and seed is not None:
+        if diffusion_noise is not None and seed is not None and input_image is not None:
             raise ValueError(
-                "`diffusion_noise` and `seed` should not both be passed to "
+                "`diffusion_noise`, `seed` and `input_image` should not both be passed to "
                 "`generate_image`. `seed` is only used to generate diffusion "
                 "noise when it's not already user-specified."
             )
 
         context = self._expand_tensor(encoded_text, batch_size)
+        timesteps = tf.range(1, 1000, 1000 // num_steps)
 
         if negative_prompt is None:
             unconditional_context = tf.repeat(
@@ -202,11 +222,27 @@ class StableDiffusionBase:
                     tf.expand_dims(diffusion_noise, axis=0), batch_size, axis=0
                 )
             latent = diffusion_noise
+        elif input_image is not None:
+            if type(input_image) is str:
+                input_image = Image.open(input_image)
+                input_image = input_image.resize((self.img_width, self.img_height))
+            elif type(input_image) is np.ndarray:
+                input_image = np.resize(input_image, (self.img_height, self.img_width, 3))
+            else:
+                raise ValueError("Wrong `input_image` type {}".format(type(input_image)))
+
+            input_image_array = np.array(input_image, dtype=np.float32)[None, ..., :3]
+            input_image_tensor = tf.cast((input_image_array / 255.0) * 2 - 1, context.dtype)
+            input_img_noise_t = timesteps[int(len(timesteps) * input_image_strength)]
+            latent = self._get_image_latent(batch_size, input_image_tensor, input_img_noise_t, seed)
         else:
             latent = self._get_initial_diffusion_noise(batch_size, seed)
 
+        # Rewind timesteps according to image strength.
+        if input_image is not None:
+            timesteps = timesteps[:int(len(timesteps) * input_image_strength)]
+
         # Iterative reverse diffusion stage
-        timesteps = tf.range(1, 1000, 1000 // num_steps)
         alphas, alphas_prev = self._get_initial_alphas(timesteps)
         progbar = keras.utils.Progbar(len(timesteps))
         iteration = 0
@@ -220,14 +256,14 @@ class StableDiffusionBase:
                 [latent, t_emb, context]
             )
             latent = unconditional_latent + unconditional_guidance_scale * (
-                latent - unconditional_latent
+                    latent - unconditional_latent
             )
             a_t, a_prev = alphas[index], alphas_prev[index]
             pred_x0 = (latent_prev - math.sqrt(1 - a_t) * latent) / math.sqrt(
                 a_t
             )
             latent = (
-                latent * math.sqrt(1.0 - a_prev) + math.sqrt(a_prev) * pred_x0
+                    latent * math.sqrt(1.0 - a_prev) + math.sqrt(a_prev) * pred_x0
             )
             iteration += 1
             progbar.update(iteration)
@@ -238,18 +274,18 @@ class StableDiffusionBase:
         return np.clip(decoded, 0, 255).astype("uint8")
 
     def inpaint(
-        self,
-        prompt,
-        image,
-        mask,
-        negative_prompt=None,
-        num_resamples=1,
-        batch_size=1,
-        num_steps=25,
-        unconditional_guidance_scale=7.5,
-        diffusion_noise=None,
-        seed=None,
-        verbose=True,
+            self,
+            prompt,
+            image,
+            mask,
+            negative_prompt=None,
+            num_resamples=1,
+            batch_size=1,
+            num_steps=25,
+            unconditional_guidance_scale=7.5,
+            diffusion_noise=None,
+            seed=None,
+            verbose=True,
     ):
         """Inpaints a masked section of the provided image based on the provided
         prompt.
@@ -360,15 +396,10 @@ class StableDiffusionBase:
                     [latent, t_emb, context]
                 )
                 latent = unconditional_latent + unconditional_guidance_scale * (
-                    latent - unconditional_latent
+                        latent - unconditional_latent
                 )
-                pred_x0 = (
-                    latent_prev - math.sqrt(1 - a_t) * latent
-                ) / math.sqrt(a_t)
-                latent = (
-                    latent * math.sqrt(1.0 - a_prev)
-                    + math.sqrt(a_prev) * pred_x0
-                )
+                pred_x0 = (latent_prev - math.sqrt(1 - a_t) * latent) / math.sqrt(a_t)
+                latent = latent * math.sqrt(1.0 - a_prev) + math.sqrt(a_prev) * pred_x0
 
                 # Use known image (x0) to compute latent
                 if timestep > 1:
@@ -376,7 +407,7 @@ class StableDiffusionBase:
                 else:
                     noise = 0.0
                 known_latent = (
-                    math.sqrt(a_prev) * known_x0 + math.sqrt(1 - a_prev) * noise
+                        math.sqrt(a_prev) * known_x0 + math.sqrt(1 - a_prev) * noise
                 )
                 # Use known latent in unmasked regions
                 latent = mask * known_latent + (1 - mask) * latent
@@ -467,7 +498,7 @@ class StableDiffusionBase:
         return self._tokenizer
 
     def _get_timestep_embedding(
-        self, timestep, batch_size, dim=320, max_period=10000
+            self, timestep, batch_size, dim=320, max_period=10000
     ):
         half = dim // 2
         freqs = tf.math.exp(
@@ -548,10 +579,10 @@ class StableDiffusion(StableDiffusionBase):
     """  # noqa: E501
 
     def __init__(
-        self,
-        img_height=512,
-        img_width=512,
-        jit_compile=False,
+            self,
+            img_height=512,
+            img_width=512,
+            jit_compile=False,
     ):
         super().__init__(img_height, img_width, jit_compile)
         print(
@@ -633,10 +664,10 @@ class StableDiffusionV2(StableDiffusionBase):
     """  # noqa: E501
 
     def __init__(
-        self,
-        img_height=512,
-        img_width=512,
-        jit_compile=False,
+            self,
+            img_height=512,
+            img_width=512,
+            jit_compile=False,
     ):
         super().__init__(img_height, img_width, jit_compile)
         print(
