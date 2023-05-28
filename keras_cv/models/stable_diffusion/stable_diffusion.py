@@ -61,6 +61,7 @@ class StableDiffusionBase:
 
         # lazy initialize the component models and the tokenizer
         self._image_encoder = None
+        self._vae = None
         self._text_encoder = None
         self._diffusion_model = None
         self._decoder = None
@@ -125,8 +126,20 @@ class StableDiffusionBase:
 
         return context
 
-    def _get_image_latent(self, batch_size, input_image, image_noise_t, seed):
-        latent = self.image_encoder(input_image)
+    def _get_image_latent(self, batch_size, input_image, image_noise_t, seed, use_vae=False):
+        if use_vae:
+            latent = self.vae_encoder(input_image)
+            mean, logvar = tf.split(latent, 2, axis=-1)
+            logvar = tf.clip_by_value(logvar, -30.0, 20.0)
+            std = tf.exp(0.5 * logvar)
+            sample = tf.random.normal(tf.shape(mean), dtype=mean.dtype)
+            latent = mean + std * sample
+            # Add magic number from here
+            # https://github.com/Elvenson/keras-cv/blob/master/keras_cv/models/stable_diffusion/image_encoder.py#L58
+            latent = latent * 0.18215
+        else:
+            latent = self.image_encoder(input_image)
+
         latent = tf.repeat(latent, batch_size, axis=0)
         noise = tf.random.normal((batch_size, latent.shape[1], latent.shape[2], 4), dtype=latent.dtype,
                                  seed=seed)
@@ -144,7 +157,8 @@ class StableDiffusionBase:
             diffusion_noise=None,
             seed=None,
             input_image=None,
-            input_image_strength=0.5
+            input_image_strength=0.5,
+            use_vae=False,
     ):
         """Generates an image based on encoded text.
 
@@ -180,6 +194,8 @@ class StableDiffusionBase:
             input_image_strength: A float ranging from [0, 1) where smaller number
                 will make the output looks similar to the `input_image` and vice
                 versa.
+            use_vae: boolean, whether to use the second to last image encoder layer
+                to generate the initial latent.
 
         Example:
 
@@ -234,7 +250,7 @@ class StableDiffusionBase:
             input_image_array = np.array(input_image, dtype=np.float32)[None, ..., :3]
             input_image_tensor = tf.cast((input_image_array / 255.0) * 2 - 1, context.dtype)
             input_img_noise_t = timesteps[int(len(timesteps) * input_image_strength)]
-            latent = self._get_image_latent(batch_size, input_image_tensor, input_img_noise_t, seed)
+            latent = self._get_image_latent(batch_size, input_image_tensor, input_img_noise_t, seed, use_vae=use_vae)
         else:
             latent = self._get_initial_diffusion_noise(batch_size, seed)
 
@@ -466,6 +482,21 @@ class StableDiffusionBase:
             if self.jit_compile:
                 self._image_encoder.compile(jit_compile=True)
         return self._image_encoder
+
+    @property
+    def vae_encoder(self):
+        """vae_encoder returns the VAE Encoder up to the second last layer
+        from image_encoder"""
+        if self._vae is None:
+            # Remove the top layer from the encoder, which cuts off the
+            # variance and only returns the mean
+            self._vae = tf.keras.Model(
+                self.image_encoder.input,
+                self.image_encoder.layers[-2].output,
+            )
+            if self.jit_compile:
+                self._vae.compile(jit_compile=True)
+        return self._vae
 
     @property
     def text_encoder(self):
