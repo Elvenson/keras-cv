@@ -89,6 +89,37 @@ class StableDiffusionBase:
             seed=seed,
         )
 
+    def image_to_image(
+            self,
+            prompt,
+            negative_prompt=None,
+            batch_size=1,
+            num_steps=50,
+            unconditional_guidance_scale=7.5,
+            seed=None,
+            input_image=None,
+            input_image_strength=0.5,
+            use_vae=False,
+    ):
+        if input_image is None:
+            raise ValueError(
+                "`input_image` cannot be None."
+            )
+
+        encoded_text = self.encode_text(prompt)
+
+        return self.generate_image(
+            encoded_text,
+            negative_prompt=negative_prompt,
+            batch_size=batch_size,
+            num_steps=num_steps,
+            unconditional_guidance_scale=unconditional_guidance_scale,
+            seed=seed,
+            input_image=input_image,
+            input_image_strength=input_image_strength,
+            use_vae=use_vae,
+        )
+
     def encode_text(self, prompt):
         """Encodes a prompt into a latent text encoding.
 
@@ -143,8 +174,9 @@ class StableDiffusionBase:
         latent = tf.repeat(latent, batch_size, axis=0)
         noise = tf.random.normal((batch_size, latent.shape[1], latent.shape[2], 4), dtype=latent.dtype,
                                  seed=seed)
-        sqrt_alpha_prod = tf.sqrt(_ALPHAS_CUMPROD[image_noise_t])
-        sqrt_one_minus_alpha_prod = tf.sqrt(1 - _ALPHAS_CUMPROD[image_noise_t])
+        # tf.cast is to support mix precision logic.
+        sqrt_alpha_prod = tf.cast(tf.math.sqrt(_ALPHAS_CUMPROD[image_noise_t]), dtype=latent.dtype)
+        sqrt_one_minus_alpha_prod = tf.cast(tf.math.sqrt(1 - _ALPHAS_CUMPROD[image_noise_t]), dtype=latent.dtype)
         return sqrt_alpha_prod * latent + sqrt_one_minus_alpha_prod * noise
 
     def generate_image(
