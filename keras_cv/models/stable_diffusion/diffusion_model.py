@@ -22,12 +22,12 @@ from keras_cv.models.stable_diffusion.__internal__.layers.padded_conv2d import (
 
 class DiffusionModel(keras.Model):
     def __init__(
-        self,
-        img_height,
-        img_width,
-        max_text_length,
-        name=None,
-        download_weights=True,
+            self,
+            img_height,
+            img_width,
+            max_text_length,
+            name=None,
+            download_weights=True,
     ):
         context = keras.layers.Input((max_text_length, 768))
         t_embed_input = keras.layers.Input((320,))
@@ -108,7 +108,8 @@ class DiffusionModel(keras.Model):
 
         if download_weights:
             diffusion_model_weights_fpath = keras.utils.get_file(
-                origin="https://huggingface.co/Elvenson/stable_diffusion_weights/resolve/main/kcv_diffusion_model.h5",  # noqa: E501
+                origin="https://huggingface.co/Elvenson/stable_diffusion_weights/resolve/main/kcv_diffusion_model.h5",
+                # noqa: E501
                 file_hash="8799ff9763de13d7f30a683d653018e114ed24a6a819667da4f5ee10f9e805fe",  # noqa: E501
             )
             self.load_weights(diffusion_model_weights_fpath)
@@ -116,12 +117,12 @@ class DiffusionModel(keras.Model):
 
 class DiffusionModelV2(keras.Model):
     def __init__(
-        self,
-        img_height,
-        img_width,
-        max_text_length,
-        name=None,
-        download_weights=True,
+            self,
+            img_height,
+            img_width,
+            max_text_length,
+            name=None,
+            download_weights=True,
     ):
         context = keras.layers.Input((max_text_length, 1024))
         t_embed_input = keras.layers.Input((320,))
@@ -202,7 +203,8 @@ class DiffusionModelV2(keras.Model):
 
         if download_weights:
             diffusion_model_weights_fpath = keras.utils.get_file(
-                origin="https://huggingface.co/Elvenson/stable_diffusion_weights/resolve/main/diffusion_model_v2_1.h5",  # noqa: E501
+                origin="https://huggingface.co/Elvenson/stable_diffusion_weights/resolve/main/diffusion_model_v2_1.h5",
+                # noqa: E501
                 file_hash="c31730e91111f98fe0e2dbde4475d381b5287ebb9672b1821796146a25c5132d",  # noqa: E501
             )
             self.load_weights(diffusion_model_weights_fpath)
@@ -298,15 +300,24 @@ class CrossAttention(keras.layers.Layer):
         self.to_q = keras.layers.Dense(num_heads * head_size, use_bias=False)
         self.to_k = keras.layers.Dense(num_heads * head_size, use_bias=False)
         self.to_v = keras.layers.Dense(num_heads * head_size, use_bias=False)
-        self.scale = head_size**-0.5
+        self.to_q_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=4, scale=1.)
+        self.to_k_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=4, scale=1.)
+        self.to_v_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=4, scale=1.)
+        self.scale = head_size ** -0.5
         self.num_heads = num_heads
         self.head_size = head_size
         self.out_proj = keras.layers.Dense(num_heads * head_size)
+        self.out_proj_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=4, scale=1.)
 
-    def call(self, inputs):
+    def call(self, inputs, lora=False):
         inputs, context = inputs
         context = inputs if context is None else context
         q, k, v = self.to_q(inputs), self.to_k(context), self.to_v(context)
+        if lora:
+            q_lora, k_lora, v_lora = self.to_q_lora(inputs), self.to_k_lora(inputs), self.to_v_lora(inputs)
+            q = q + q_lora
+            k = k + k_lora
+            v = v + v_lora
         q = tf.reshape(q, (-1, inputs.shape[1], self.num_heads, self.head_size))
         k = tf.reshape(
             k, (-1, context.shape[1], self.num_heads, self.head_size)
@@ -330,6 +341,8 @@ class CrossAttention(keras.layers.Layer):
         out = tf.reshape(
             attn, (-1, inputs.shape[1], self.num_heads * self.head_size)
         )
+        if lora:
+            return self.out_proj(out) + self.out_proj_lora(out)
         return self.out_proj(out)
 
 
@@ -351,9 +364,9 @@ class GEGLU(keras.layers.Layer):
 
     def call(self, inputs):
         x = self.dense(inputs)
-        x, gate = x[..., : self.output_dim], x[..., self.output_dim :]
+        x, gate = x[..., : self.output_dim], x[..., self.output_dim:]
         tanh_res = keras.activations.tanh(
-            gate * 0.7978845608 * (1 + 0.044715 * (gate**2))
+            gate * 0.7978845608 * (1 + 0.044715 * (gate ** 2))
         )
         return x * 0.5 * gate * (1 + tanh_res)
 
@@ -363,3 +376,24 @@ def td_dot(a, b):
     bb = tf.reshape(b, (-1, b.shape[2], b.shape[3]))
     cc = keras.backend.batch_dot(aa, bb)
     return tf.reshape(cc, (-1, a.shape[1], cc.shape[1], cc.shape[2]))
+
+
+class LoRADense(keras.layers.Layer):
+    def __int__(self, output_dim, rank=4, alpha=4., use_bias=False, **kwargs):
+        super().__init__(**kwargs)
+        if rank > output_dim:
+            raise ValueError(f"LoRA rank {rank} must be less or equal than {output_dim}")
+
+        self.output_dim = output_dim
+        self.rank = rank
+        self.use_bias = use_bias
+        self.scale = alpha / self.rank
+
+        self.down_layer = keras.layers.Dense(self.rank, use_bias=self.use_bias,
+                                             kernel_initializer=tf.keras.initializers.RandomNormal(
+                                                 stddev=1 / self.rank))
+        self.up_layer = keras.layers.Dense(self.output_dim, use_bias=self.use_bias,
+                                           kernel_initializer=tf.keras.initializers.Zeros())
+
+    def call(self, inputs):
+        return self.up_layer(self.down_layer(inputs)) * self.scale
