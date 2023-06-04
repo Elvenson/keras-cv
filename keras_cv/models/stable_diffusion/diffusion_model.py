@@ -28,6 +28,9 @@ class DiffusionModel(keras.Model):
             max_text_length,
             name=None,
             download_weights=True,
+            lora=False,
+            lora_rank=4,
+            lora_alpha=1.0
     ):
         context = keras.layers.Input((max_text_length, 768))
         t_embed_input = keras.layers.Input((320,))
@@ -45,21 +48,24 @@ class DiffusionModel(keras.Model):
 
         for _ in range(2):
             x = ResBlock(320)([x, t_emb])
-            x = SpatialTransformer(8, 40, fully_connected=False)([x, context])
+            x = SpatialTransformer(8, 40, fully_connected=False, lora=lora, lora_rank=lora_rank, lora_alpha=lora_alpha)(
+                [x, context])
             outputs.append(x)
         x = PaddedConv2D(320, 3, strides=2, padding=1)(x)  # Downsample 2x
         outputs.append(x)
 
         for _ in range(2):
             x = ResBlock(640)([x, t_emb])
-            x = SpatialTransformer(8, 80, fully_connected=False)([x, context])
+            x = SpatialTransformer(8, 80, fully_connected=False, lora=lora, lora_rank=lora_rank, lora_alpha=lora_alpha)(
+                [x, context])
             outputs.append(x)
         x = PaddedConv2D(640, 3, strides=2, padding=1)(x)  # Downsample 2x
         outputs.append(x)
 
         for _ in range(2):
             x = ResBlock(1280)([x, t_emb])
-            x = SpatialTransformer(8, 160, fully_connected=False)([x, context])
+            x = SpatialTransformer(8, 160, fully_connected=False, lora=lora, lora_rank=lora_rank,
+                                   lora_alpha=lora_alpha)([x, context])
             outputs.append(x)
         x = PaddedConv2D(1280, 3, strides=2, padding=1)(x)  # Downsample 2x
         outputs.append(x)
@@ -71,7 +77,8 @@ class DiffusionModel(keras.Model):
         # Middle flow
 
         x = ResBlock(1280)([x, t_emb])
-        x = SpatialTransformer(8, 160, fully_connected=False)([x, context])
+        x = SpatialTransformer(8, 160, fully_connected=False, lora=lora, lora_rank=lora_rank, lora_alpha=lora_alpha)(
+            [x, context])
         x = ResBlock(1280)([x, t_emb])
 
         # Upsampling flow
@@ -84,19 +91,22 @@ class DiffusionModel(keras.Model):
         for _ in range(3):
             x = keras.layers.Concatenate()([x, outputs.pop()])
             x = ResBlock(1280)([x, t_emb])
-            x = SpatialTransformer(8, 160, fully_connected=False)([x, context])
+            x = SpatialTransformer(8, 160, fully_connected=False, lora=lora, lora_rank=lora_rank,
+                                   lora_alpha=lora_alpha)([x, context])
         x = Upsample(1280)(x)
 
         for _ in range(3):
             x = keras.layers.Concatenate()([x, outputs.pop()])
             x = ResBlock(640)([x, t_emb])
-            x = SpatialTransformer(8, 80, fully_connected=False)([x, context])
+            x = SpatialTransformer(8, 80, fully_connected=False, lora=lora, lora_rank=lora_rank, lora_alpha=lora_alpha)(
+                [x, context])
         x = Upsample(640)(x)
 
         for _ in range(3):
             x = keras.layers.Concatenate()([x, outputs.pop()])
             x = ResBlock(320)([x, t_emb])
-            x = SpatialTransformer(8, 40, fully_connected=False)([x, context])
+            x = SpatialTransformer(8, 40, fully_connected=False, lora=lora, lora_rank=lora_rank, lora_alpha=lora_alpha)(
+                [x, context])
 
         # Exit flow
 
@@ -249,7 +259,7 @@ class ResBlock(keras.layers.Layer):
 
 
 class SpatialTransformer(keras.layers.Layer):
-    def __init__(self, num_heads, head_size, fully_connected=False, **kwargs):
+    def __init__(self, num_heads, head_size, fully_connected=False, lora=False, lora_rank=4, lora_alpha=1.0, **kwargs):
         super().__init__(**kwargs)
         self.norm = keras.layers.GroupNormalization(epsilon=1e-5)
         channels = num_heads * head_size
@@ -258,7 +268,7 @@ class SpatialTransformer(keras.layers.Layer):
         else:
             self.proj1 = PaddedConv2D(num_heads * head_size, 1)
         self.transformer_block = BasicTransformerBlock(
-            channels, num_heads, head_size
+            channels, num_heads, head_size, lora=lora, lora_rank=lora_rank, lora_alpha=lora_alpha
         )
         if fully_connected:
             self.proj2 = keras.layers.Dense(channels)
@@ -277,12 +287,12 @@ class SpatialTransformer(keras.layers.Layer):
 
 
 class BasicTransformerBlock(keras.layers.Layer):
-    def __init__(self, dim, num_heads, head_size, **kwargs):
+    def __init__(self, dim, num_heads, head_size, lora=False, lora_rank=4, lora_alpha=1., **kwargs):
         super().__init__(**kwargs)
         self.norm1 = keras.layers.LayerNormalization(epsilon=1e-5)
-        self.attn1 = CrossAttention(num_heads, head_size)
+        self.attn1 = CrossAttention(num_heads, head_size, lora=lora, lora_rank=lora_rank, lora_alpha=lora_alpha)
         self.norm2 = keras.layers.LayerNormalization(epsilon=1e-5)
-        self.attn2 = CrossAttention(num_heads, head_size)
+        self.attn2 = CrossAttention(num_heads, head_size, lora=lora, lora_rank=lora_rank, lora_alpha=lora_alpha)
         self.norm3 = keras.layers.LayerNormalization(epsilon=1e-5)
         self.geglu = GEGLU(dim * 4)
         self.dense = keras.layers.Dense(dim)
@@ -295,26 +305,34 @@ class BasicTransformerBlock(keras.layers.Layer):
 
 
 class CrossAttention(keras.layers.Layer):
-    def __init__(self, num_heads, head_size, **kwargs):
+    def __init__(self, num_heads, head_size, lora=False, lora_rank=4, lora_alpha=1., **kwargs):
         super().__init__(**kwargs)
         self.to_q = keras.layers.Dense(num_heads * head_size, use_bias=False)
         self.to_k = keras.layers.Dense(num_heads * head_size, use_bias=False)
         self.to_v = keras.layers.Dense(num_heads * head_size, use_bias=False)
-        self.to_q_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=4, scale=1.)
-        self.to_k_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=4, scale=1.)
-        self.to_v_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=4, scale=1.)
+
+        self.lora = lora
+        self.lora_rank = lora_rank
+        self.lora_alpha = lora_alpha
+        self.to_q_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=self.lora_rank,
+                                   alpha=self.lora_alpha)
+        self.to_k_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=self.lora_rank,
+                                   alpha=self.lora_alpha)
+        self.to_v_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=self.lora_rank,
+                                   alpha=self.lora_alpha)
         self.scale = head_size ** -0.5
         self.num_heads = num_heads
         self.head_size = head_size
         self.out_proj = keras.layers.Dense(num_heads * head_size)
-        self.out_proj_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=4, scale=1.)
+        self.out_proj_lora = LoRADense(output_dim=num_heads * head_size, use_bias=False, rank=self.lora_rank,
+                                       alpha=self.lora_alpha)
 
-    def call(self, inputs, lora=False):
+    def call(self, inputs):
         inputs, context = inputs
         context = inputs if context is None else context
         q, k, v = self.to_q(inputs), self.to_k(context), self.to_v(context)
-        if lora:
-            q_lora, k_lora, v_lora = self.to_q_lora(inputs), self.to_k_lora(inputs), self.to_v_lora(inputs)
+        if self.lora:
+            q_lora, k_lora, v_lora = self.to_q_lora(inputs), self.to_k_lora(context), self.to_v_lora(context)
             q = q + q_lora
             k = k + k_lora
             v = v + v_lora
@@ -341,7 +359,7 @@ class CrossAttention(keras.layers.Layer):
         out = tf.reshape(
             attn, (-1, inputs.shape[1], self.num_heads * self.head_size)
         )
-        if lora:
+        if self.lora:
             return self.out_proj(out) + self.out_proj_lora(out)
         return self.out_proj(out)
 
@@ -379,7 +397,7 @@ def td_dot(a, b):
 
 
 class LoRADense(keras.layers.Layer):
-    def __int__(self, output_dim, rank=4, alpha=4., use_bias=False, **kwargs):
+    def __init__(self, output_dim, rank=4, alpha=4., use_bias=False, **kwargs):
         super().__init__(**kwargs)
         if rank > output_dim:
             raise ValueError(f"LoRA rank {rank} must be less or equal than {output_dim}")
