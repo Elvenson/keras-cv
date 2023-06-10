@@ -45,7 +45,6 @@ def save_image(image, filename):
 class Predictor(BasePredictor):
     def setup(self):
         """Load the model into memory to make running multiple predictions efficient"""
-        keras.mixed_precision.set_global_policy("float32")
         # For initialization purpose
         prompt = "a happy cat on a hat"
         model_v1 = StableDiffusion(img_height=128, img_width=128, jit_compile=True)
