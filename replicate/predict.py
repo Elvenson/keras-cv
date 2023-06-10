@@ -6,7 +6,6 @@ import tensorflow as tf
 import tensorflow_hub as hub
 from PIL import Image
 from cog import BasePredictor, Path, Input
-from tensorflow import keras
 
 os.environ["TFHUB_DOWNLOAD_PROGRESS"] = "True"
 SAVED_MODEL_PATH = "https://tfhub.dev/captain-pool/esrgan-tf2/1"
@@ -82,7 +81,6 @@ class Predictor(BasePredictor):
                 ),
                 upscale: bool = Input(
                     description="Whether to upscale the image by 4 times",
-                    choices=[False, True],
                     default=False
                 ),
                 ) -> List[Path]:
