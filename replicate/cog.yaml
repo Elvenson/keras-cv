@@ -17,6 +17,7 @@ build:
     - tensorflow==2.11.0
     - Pillow==9.2.0
     - alt-profanity-check==1.0.1
+    - tensorflow-hub==0.13.0
 
   # commands run after the environment is setup
   run:
